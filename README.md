@@ -16,17 +16,6 @@ The simulator runs a historical backtest from 2022–2024 on a 20-stock universe
 - Full dashboard visualization with pitch annotations
 - Long-only constraint enforcement throughout
 
-## Project Structure
-
-```
-.
-├── firstname_lastname.py   # Main simulation file
-├── ticker_data.csv         # Adjusted close prices for 20 tickers (2022–2024)
-├── benchmark_data.csv      # SPY prices for benchmark comparison
-├── pitch_schedule.csv      # Dates and tickers of PM pitches
-└── portfolio_dashboard.png # Output dashboard (generated on run)
-```
-
 ## Installation
 
 ```bash
@@ -36,7 +25,7 @@ pip install numpy pandas matplotlib
 ## Usage
 
 ```bash
-python firstname_lastname.py
+python3 noor_kanaan.py
 ```
 
 The simulation will run automatically and output:
