@@ -108,15 +108,15 @@ class Portfolio:
         ticker_prices_df = pd.read_csv(ticker_csv, index_col="Date", parse_dates=True)
         for ticker in self.tickers:
             df = self.ticker_holdings[ticker]
-        
+            #mk sure stock's df has same dates as price data - w/o this simulation would break
             df = df.reindex(ticker_prices_df.index)
-
+            #add stock prices 
             df["Price"] = ticker_prices_df[ticker]
-
+            #replace missing values w 0
             df["Volume"] = df["Volume"].fillna(0)
             df["Unit Cost"] = df["Unit Cost"].fillna(0)
             df["Total Value"] = df["Total Value"].fillna(0)
-            self.ticker_holdings[ticker] = df
+            self.ticker_holdings[ticker] = df #save updated dataframe
         
         #2. 
         market_prices_df = pd.read_csv(benchmark_csv, index_col="Date", parse_dates=True) 
@@ -124,17 +124,19 @@ class Portfolio:
         
         #3. 
         pitch_df = pd.read_csv(pitch_csv)
+        #convert dates to correct format yr/mm/dd
         pitch_df["Date"] = pd.to_datetime(pitch_df["Date"])
         for _, row in pitch_df.iterrows():
+            #create dictionary so {date : ticker}
             self.pitch_map[row["Date"]] = row["Ticker"]
 
-        #4. 
+        #4. Set the index of self.pitch_log to the sorted dates in self.pitch_map.
         self.pitch_log= self.pitch_log.reindex(sorted(self.pitch_map.keys()))
 
        
 
 
-        # Step 5: initialize portfolio_history with the full date index so that it is known when pulled on first day
+        # Step 5: reinitialize portfolio_history with the full date index so that it is known when pulled on first day
         self.portfolio_history = pd.DataFrame(
             np.nan,
             index=ticker_prices_df.index,
@@ -149,14 +151,14 @@ class Portfolio:
                      "New Metric"],
             dtype=float
         )
-
+    #calculates total portfolio value today n daily return for a given day - how much is my portfolio worth today and how did it change compared to yesterday? 
     def update_holdings_and_portfolio_value(self, day):
         # Pull cash holdings
         portfolio_value = self.cash
         # Sum the Volume * Price of each ticker to calculate total value
         for ticker in self.tickers:
-            volume = self.ticker_holdings[ticker].loc[day, "Volume"]
-            price = self.ticker_holdings[ticker].loc[day, "Price"]
+            volume = self.ticker_holdings[ticker].loc[day, "Volume"] #how many shares do i have
+            price = self.ticker_holdings[ticker].loc[day, "Price"] #price of each share
             total_value = volume * price
             self.ticker_holdings[ticker].loc[day, "Total Value"] = total_value
             portfolio_value += total_value
@@ -198,7 +200,7 @@ class Portfolio:
 
         # Updates the portfolio holdings
         self.ticker_holdings[ticker].loc[date, "Volume"] = self.ticker_holdings[ticker].loc[prev_date, "Volume"] + count
-        self.ticker_holdings[ticker].loc[date, "Unit Cost"] = ((self.ticker_holdings[ticker].loc[prev_date, "Unit Cost"] * self.ticker_holdings[ticker].loc[prev_date, "Volume"]) + (price * count)) / self.ticker_holdings[ticker].loc[date, "Volume"]
+        self.ticker_holdings[ticker].loc[date, "Unit Cost"] = ((self.ticker_holdings[ticker].loc[prev_date, "Unit Cost"] * self.ticker_holdings[ticker].loc[prev_date, "Volume"]) + (price * count)) / self.ticker_holdings[ticker].loc[date, "Volume"] 
         self.ticker_holdings[ticker].loc[date, "Total Value"] = self.ticker_holdings[ticker].loc[date, "Volume"] * self.ticker_holdings[ticker].loc[date, "Unit Cost"]
         self.cash -= (price * count)
 
@@ -285,6 +287,7 @@ class Portfolio:
         self.display_data()
 
     # TO-DO
+    #every day look back at prev 30 days n calc risk metrics for each stock and the whole portfolio
     def calculate_metrics(self,date):
         """
         Calculate previous 30-day risk metrics.
@@ -310,29 +313,30 @@ class Portfolio:
         Downside vol measures negative fluctuations of returns and focuses specifically on loss risk. I chose it since it differs from standard vol where it doesnt focus on the positive price movements. This custom metric complements sortino and sharpe ratio by showing the extent of negative price movements.
         """
 
-        #1.
+        #1. 
       
 
         #go thru each ticker
         for ticker in self.tickers:
             prices = self.ticker_holdings[ticker]["Price"].loc[:date]
-
+            #convert prices to daily returns
             returns = prices.pct_change().dropna()
             prior_thirty_days = returns.iloc[-30:]
-
+            #not enough data, skip
             if len(prior_thirty_days) < 30:
                 continue
-
+            #mk sure stock returns n market returns line up on same dates for beta calculation
             market_returns = self.market_prices.pct_change().loc[prior_thirty_days.index].dropna()
+            #mk stock returns match exactly cleaned market dates
             prior_thirty_days_aligned = prior_thirty_days.loc[market_returns.index]
 
-            #VaR = 95% Confidence Var, so the 5th percentile will be used to show the losses
+            #VaR = 95% Confidence Var, so the 5th percentile will be used to show the losses - worst 5% outcome
             var = np.percentile(prior_thirty_days, 5)
            
             #Vol
             vol = prior_thirty_days.std()
            
-            #Max Drawdown = (peak val - trough val) / peak val
+            #Max Drawdown = (peak val - trough val) / peak val - worst loss from a high point
             peak_val = prices.iloc[-30:].cummax()
             drawdown = (prices.iloc[-30:] - peak_val) / peak_val
             max_drawdown = drawdown.min()
@@ -344,14 +348,14 @@ class Portfolio:
             #sharpe = mean / sd(total) - higher sharpe is a better risk adj return
             sharpe = prior_thirty_days.mean() / vol if vol != 0 else 0
            
-            #sortino = Return of port - risk free rate / sd(downside)
+            #sortino = Return of port - risk free rate(0) / sd(downside) - higher sortino is better bc bettr risk-adjusted performance
             downside_vol = prior_thirty_days[prior_thirty_days < 0].std()
             sortino = prior_thirty_days.mean() / downside_vol if downside_vol != 0 else 0
             
             #custom metric - Downside volatility (def above)
             custom  = downside_vol #basically written and used above
 
-            #Store results in the ticker's DataFrame. VaR, Volatility, Max Drawdown, Beta, Sharpe, Sortino 
+            #Store results in the ticker's DataFrame for that day. VaR, Volatility, Max Drawdown, Beta, Sharpe, Sortino 
             self.ticker_holdings[ticker].loc[date, "VaR"] = var
             self.ticker_holdings[ticker].loc[date, "Volatility"] = vol
             self.ticker_holdings[ticker].loc[date, "Max DD"] = max_drawdown
@@ -363,7 +367,7 @@ class Portfolio:
         #2. Portfolio-level metrics using portfolio return series
         port_returns = self.portfolio_history["Portfolio Return"].loc[:date].dropna()
         prior_thirty_days_port = port_returns.iloc[-30:]
-
+        #variance n covariance need at least 2 data points
         if len(prior_thirty_days_port) < 2:
             return
 
@@ -408,29 +412,29 @@ class Portfolio:
 
     # TO-DO
     def handle_pitch(self, date, cash_buffer=0.01):
-
+        #only on pitch dates
         if date not in self.pitch_map:
             return 
-
+        #pull ticker being pitched n its data (prices n metrics)
         ticker = self.pitch_map[date]
         df = self.ticker_holdings[ticker]
 
-        vol = df.loc[date, "Volatility"]
-        var = df.loc[date, "VaR"]
-        sharpe = df.loc[date, "Sharpe"]
-        downside_vol = df.loc[date, "New Metric"]
+        vol = df.loc[date, "Volatility"] #total risk
+        var = df.loc[date, "VaR"] #worst case loss
+        sharpe = df.loc[date, "Sharpe"] #risk-adjusted return
+        downside_vol = df.loc[date, "New Metric"] #negative risk 
 
         #variable to keep track of how many risk metric conditions are met
         conditions_met = 0 
 
         #thresholds for risk metrics
-        if pd.notna(sharpe) and sharpe > 0:
+        if pd.notna(sharpe) and sharpe > 0: #positive return per unit risk
             conditions_met+=1
-        if pd.notna(vol) and vol < 0.02:
+        if pd.notna(vol) and vol < 0.02: #low vol needed
             conditions_met+=1
-        if pd.notna(downside_vol) and downside_vol < 0.015:
+        if pd.notna(downside_vol) and downside_vol < 0.015: #low downside risk
             conditions_met+=1
-        if pd.notna(var) and var > -0.03:
+        if pd.notna(var) and var > -0.03: #limited losses
             conditions_met+=1
         
         #how many conditions met
@@ -444,26 +448,31 @@ class Portfolio:
         
             #make all stocks be equally weighted
             target_weight = 1 / len(self.active_tickers)
+            #see how much i can invest via cash
             investable = portfolio_value * (1 - cash_buffer)
-
+            #rebalance all stocks
             for stock in list(self.active_tickers):
                 price = self.ticker_holdings[stock].loc[date, "Price"]
                 shares = self.ticker_holdings[stock].loc[date, "Volume"]
+                #if diff is pos we buy; else we sell
                 current_value = shares * price
                 target_value = investable * target_weight
                 difference = target_value - current_value
+                #turn dollar diff to number of shares
                 shares_to_trade = int(abs(difference) / price)
 
                 if shares_to_trade > 0: 
                     if difference > 0:
                         # Enforce cash buffer before buying
                         cost = shares_to_trade * price
+                        #dont break minimum cash rule
                         if self.cash - cost < portfolio_value * cash_buffer:
+                            #then we adjust so we only buy what we can afford
                             shares_to_trade = int((self.cash - portfolio_value * cash_buffer) / price)
                         if shares_to_trade > 0:
                             self.buy(stock, shares_to_trade, date)
                     else:
-                        # Enforce long-only: never sell more than current shares
+                        # Enforce long-only: we never sell more than current shares (what we own)
                         shares_to_trade = min(shares_to_trade, int(shares))
                         if shares_to_trade > 0:
                             self.sell(stock, shares_to_trade, date)
@@ -517,7 +526,7 @@ class Portfolio:
     # the risk, Volatility shows how much the price is moving around in general, VaR gives a sense
     # of how bad a single bad day could get, and Downside Vol (my custom metric) focuses only on
     # the negative days specifically. I set the thresholds at Sharpe > 0, Vol < 0.02, VaR > -0.03,
-    # and Downside Vol < 0.015 since those felt like reasonable cutoffs for a diversified portfolio
+    # and Downside Vol < 0.015 since those felt like reasonable cutoffs for a diversified portfolio.
     # stocks that fail these are just too volatile or risky to add.
     
     # - Weight Distribution Justification: 
@@ -561,8 +570,8 @@ class Portfolio:
         rarely spiked too high. The rejections made sense too, TSLA and NFLX were both going through
         really choppy periods when they were pitched so keeping them out was the right call.
 
-        Compared to SPY the portfolio ended up with lower returns overall which isn't surprising since
-        we were being pretty selective and holding cash. But the drawdowns were also smaller during
+        Compared to SPY the portfolio ended up with good returns overall which isn't surprising since
+        we were being pretty selective and holding cash. The drawdowns were also smaller during
         the rougher stretches in 2022 which is kind of the whole point of managing risk this way.
         If I were to change anything I'd maybe loosen the Vol threshold slightly since it ended up
         rejecting a few stocks that probably would have been fine long term, but the conservative
